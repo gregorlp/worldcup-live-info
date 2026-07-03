@@ -1,0 +1,395 @@
+openapi: 3.0.3
+info:
+  title: World Cup 2026 API (football-data.org facade)
+  description: >
+    Definición OpenAPI de las operaciones del Mundial 2026 (competición `WC`)
+    que consume la app. Pensada para importarse en Azure API Management (APIM)
+    como API, colocando APIM como gateway delante de football-data.org.
+
+    El backend real es `https://api.football-data.org/v4` y requiere la cabecera
+    `X-Auth-Token`. La recomendación es NO exponer esa token al cliente: se
+    guarda como Named Value en APIM y se inyecta mediante una policy
+    `set-header`, mientras los consumidores usan la Subscription Key de APIM
+    (cabecera `Ocp-Apim-Subscription-Key`).
+  version: 1.0.0
+  contact:
+    name: football-data.org
+    url: https://www.football-data.org/documentation/quickstart
+
+servers:
+  - url: https://api.football-data.org/v4
+    description: Backend real (football-data.org)
+  - url: https://{apimName}.azure-api.net/{apiSuffix}
+    description: Gateway de Azure APIM
+    variables:
+      apimName:
+        default: tu-instancia-apim
+        description: Nombre de tu instancia de APIM
+      apiSuffix:
+        default: worldcup
+        description: API URL suffix configurado al importar la API en APIM
+
+security:
+  - footballDataToken: []
+
+tags:
+  - name: Competition
+    description: Información general de la competición
+  - name: Standings
+    description: Clasificación por grupos
+  - name: Matches
+    description: Partidos y resultados
+  - name: Scorers
+    description: Máximos goleadores
+
+paths:
+  /competitions/WC:
+    get:
+      tags: [Competition]
+      operationId: getCompetition
+      summary: Información de la competición (Mundial 2026)
+      description: Devuelve metadatos de la competición, incluida la temporada actual.
+      responses:
+        "200":
+          description: Información de la competición
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Competition"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /competitions/WC/standings:
+    get:
+      tags: [Standings]
+      operationId: getStandings
+      summary: Clasificación por grupos
+      description: >
+        Devuelve la clasificación. La app filtra los grupos con `type = TOTAL`
+        para mostrar las 12 tablas de grupos (A–L).
+      responses:
+        "200":
+          description: Clasificación
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StandingsResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /competitions/WC/matches:
+    get:
+      tags: [Matches]
+      operationId: getMatches
+      summary: Lista de partidos
+      description: >
+        Devuelve todos los partidos del torneo. La app filtra en el servidor los
+        partidos cuya fecha coincide con el día actual para la vista "Hoy".
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+        - name: status
+          in: query
+          required: false
+          description: Filtra por estado del partido.
+          schema:
+            type: string
+            enum: [SCHEDULED, TIMED, IN_PLAY, PAUSED, FINISHED, POSTPONED, SUSPENDED, CANCELLED]
+      responses:
+        "200":
+          description: Lista de partidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchesResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /competitions/WC/scorers:
+    get:
+      tags: [Scorers]
+      operationId: getScorers
+      summary: Máximos goleadores
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Número máximo de goleadores a devolver.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Ranking de goleadores
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScorersResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+components:
+  securitySchemes:
+    footballDataToken:
+      type: apiKey
+      in: header
+      name: X-Auth-Token
+      description: >
+        Token de football-data.org. En APIM se inyecta vía policy y NO la
+        proporciona el cliente. Los consumidores usan la Subscription Key de APIM.
+    apimSubscriptionKey:
+      type: apiKey
+      in: header
+      name: Ocp-Apim-Subscription-Key
+      description: Subscription Key emitida por APIM a los consumidores.
+
+  parameters:
+    DateFrom:
+      name: dateFrom
+      in: query
+      required: false
+      description: Fecha de inicio (YYYY-MM-DD).
+      schema:
+        type: string
+        format: date
+        example: "2026-06-11"
+    DateTo:
+      name: dateTo
+      in: query
+      required: false
+      description: Fecha de fin (YYYY-MM-DD).
+      schema:
+        type: string
+        format: date
+        example: "2026-07-19"
+
+  responses:
+    Forbidden:
+      description: La API key no tiene acceso a esta competición.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Se ha superado el límite de peticiones.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        errorCode:
+          type: integer
+
+    Team:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 760
+        name:
+          type: string
+          example: Argentina
+        shortName:
+          type: string
+          example: Argentina
+        tla:
+          type: string
+          example: ARG
+        crest:
+          type: string
+          format: uri
+          example: https://crests.football-data.org/760.png
+
+    Season:
+      type: object
+      properties:
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        currentMatchday:
+          type: integer
+          nullable: true
+
+    Competition:
+      type: object
+      properties:
+        name:
+          type: string
+          example: FIFA World Cup
+        emblem:
+          type: string
+          format: uri
+        currentSeason:
+          $ref: "#/components/schemas/Season"
+
+    ScoreSide:
+      type: object
+      properties:
+        home:
+          type: integer
+          nullable: true
+        away:
+          type: integer
+          nullable: true
+
+    Match:
+      type: object
+      properties:
+        id:
+          type: integer
+        utcDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [SCHEDULED, TIMED, IN_PLAY, PAUSED, FINISHED, POSTPONED, SUSPENDED, CANCELLED]
+        matchday:
+          type: integer
+          nullable: true
+        stage:
+          type: string
+          example: GROUP_STAGE
+        group:
+          type: string
+          nullable: true
+          example: GROUP_A
+        homeTeam:
+          $ref: "#/components/schemas/Team"
+        awayTeam:
+          $ref: "#/components/schemas/Team"
+        score:
+          type: object
+          properties:
+            winner:
+              type: string
+              nullable: true
+              enum: [HOME_TEAM, AWAY_TEAM, DRAW, null]
+            duration:
+              type: string
+              example: REGULAR
+            fullTime:
+              $ref: "#/components/schemas/ScoreSide"
+            halfTime:
+              $ref: "#/components/schemas/ScoreSide"
+
+    MatchesResponse:
+      type: object
+      properties:
+        resultSet:
+          type: object
+          properties:
+            count:
+              type: integer
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/Match"
+
+    StandingRow:
+      type: object
+      properties:
+        position:
+          type: integer
+        team:
+          $ref: "#/components/schemas/Team"
+        playedGames:
+          type: integer
+        won:
+          type: integer
+        draw:
+          type: integer
+        lost:
+          type: integer
+        points:
+          type: integer
+        goalsFor:
+          type: integer
+        goalsAgainst:
+          type: integer
+        goalDifference:
+          type: integer
+
+    StandingGroup:
+      type: object
+      properties:
+        stage:
+          type: string
+          example: GROUP_STAGE
+        type:
+          type: string
+          enum: [TOTAL, HOME, AWAY]
+        group:
+          type: string
+          nullable: true
+          example: GROUP_A
+        table:
+          type: array
+          items:
+            $ref: "#/components/schemas/StandingRow"
+
+    StandingsResponse:
+      type: object
+      properties:
+        competition:
+          $ref: "#/components/schemas/Competition"
+        standings:
+          type: array
+          items:
+            $ref: "#/components/schemas/StandingGroup"
+
+    Scorer:
+      type: object
+      properties:
+        player:
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            nationality:
+              type: string
+              nullable: true
+        team:
+          $ref: "#/components/schemas/Team"
+        playedMatches:
+          type: integer
+          nullable: true
+        goals:
+          type: integer
+          nullable: true
+        assists:
+          type: integer
+          nullable: true
+        penalties:
+          type: integer
+          nullable: true
+
+    ScorersResponse:
+      type: object
+      properties:
+        count:
+          type: integer
+        scorers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scorer"

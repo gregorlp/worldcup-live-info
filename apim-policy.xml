@@ -1,0 +1,62 @@
+<!--
+  Policy de Azure APIM para la API "World Cup 2026".
+  Pégala a nivel de API (All operations) en el editor de policies de APIM.
+
+  Requisitos previos en APIM:
+  - Named Value: "football-data-token"  -> tu API key de football-data.org (márcalo como secret).
+  - Backend / service URL apuntando a https://api.football-data.org/v4
+-->
+<policies>
+  <inbound>
+    <base />
+
+    <!-- 1. Inyecta la token real de football-data.org (oculta al cliente) -->
+    <set-header name="X-Auth-Token" exists-action="override">
+      <value>{{football-data-token}}</value>
+    </set-header>
+
+    <!-- 2. Rate limit por subscription key: 10 llamadas / 60s -->
+    <rate-limit-by-key calls="10" renewal-period="60"
+      counter-key="@(context.Subscription?.Id ?? context.Request.IpAddress)" />
+
+    <!-- 3. Quota diaria opcional: 100 llamadas / día -->
+    <quota-by-key calls="100" renewal-period="86400"
+      counter-key="@(context.Subscription?.Id ?? context.Request.IpAddress)" />
+
+    <!-- 4. Lee de la caché si existe (varía por URL completa) -->
+    <cache-lookup vary-by-developer="false" vary-by-developer-groups="false" downstream-caching-type="none">
+      <vary-by-query-parameter>limit</vary-by-query-parameter>
+      <vary-by-query-parameter>status</vary-by-query-parameter>
+      <vary-by-query-parameter>dateFrom</vary-by-query-parameter>
+      <vary-by-query-parameter>dateTo</vary-by-query-parameter>
+    </cache-lookup>
+
+    <!-- 5. CORS para que la app (navegador) pueda llamar al gateway -->
+    <cors allow-credentials="false">
+      <allowed-origins>
+        <origin>*</origin>
+      </allowed-origins>
+      <allowed-methods>
+        <method>GET</method>
+        <method>OPTIONS</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>Ocp-Apim-Subscription-Key</header>
+      </allowed-headers>
+    </cors>
+  </inbound>
+
+  <backend>
+    <base />
+  </backend>
+
+  <outbound>
+    <base />
+    <!-- 6. Guarda en caché 300s (5 min). Ajusta por operación si quieres. -->
+    <cache-store duration="300" />
+  </outbound>
+
+  <on-error>
+    <base />
+  </on-error>
+</policies>
