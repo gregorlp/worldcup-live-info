@@ -75,6 +75,81 @@ API externa football-data.org
 
 ---
 
+## Pasos de configuración (setup completo)
+
+Orden real en que se armó la infraestructura, capa por capa, con los obstáculos
+que hubo que resolver en cada una.
+
+### Paso 1 — Microsoft Entra ID (identidad)
+
+1. **Registrar una aplicación** en Entra ID para representar al cliente (la app
+   Next.js).
+2. Crear un **client secret** para el flujo *client credentials*.
+3. Anotar los datos que luego consume la app:
+   - `TENANT_ID`
+   - `CLIENT_ID`
+   - `CLIENT_SECRET`
+   - **scope** con formato `api://<APP_ID>/.default`
+4. Esto habilita el flujo **OAuth 2.0 client credentials**: la app pide un token
+   Bearer a `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token`.
+
+> **Obstáculo:** entender que el scope debe terminar en `/.default` (permisos de
+> aplicación, no delegados) para el flujo servicio-a-servicio. Con un scope mal
+> formado, Entra ID no emite el token.
+
+### Paso 2 — Azure API Management (el gateway)
+
+1. Crear la **instancia de APIM** (`apim-football-data` / `apim-gregor-demo`).
+2. **Importar la API** y definir la **Base URL** del gateway.
+3. Activar la **subscription** requerida → habilita la key
+   `Ocp-Apim-Subscription-Key`, que identifica al consumidor/producto.
+4. Añadir la policy **`validate-jwt`** en el `<inbound>`: es la capa que **valida
+   y obliga** el token Bearer (issuer + audience del tenant).
+5. Configurar el **backend** hacia la API externa football-data, con un
+   `set-header` que inyecta la credencial real hacia el backend.
+6. Añadir **policy de caché** de respuestas en el gateway.
+
+> **Obstáculo:** confundir el radio *User authorization (None / OAuth 2.0)* de
+> Settings con el enforcement de seguridad. Ese radio solo afecta a la **Test
+> console** (si adquiere el token sola o no); **quien realmente valida el token es
+> la policy `validate-jwt`**. La seguridad no depende de ese botón.
+
+Resultado: **doble capa de seguridad** → subscription key (consumidor) +
+`validate-jwt` (identidad).
+
+### Paso 3 — La aplicación (Next.js)
+
+1. Cargar las **variables de entorno** en el proyecto Vercel (nunca en el repo):
+   `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+   `AZURE_TOKEN_SCOPE`, `APIM_SUBSCRIPTION_KEY`.
+2. Escribir el **cliente de token** (`lib/azure-token.ts`, `server-only`): obtiene
+   el token y lo **cachea en memoria** hasta poco antes de expirar (~1h).
+3. Escribir el **cliente de la API** (`lib/football-api.ts`, `server-only`): manda
+   `Authorization: Bearer` + `Ocp-Apim-Subscription-Key` a APIM, con caché de
+   Next.js por endpoint (`revalidate`).
+
+> **Obstáculo:** al principio "no se veían" las llamadas a Azure en el navegador.
+> No era un error: al ser **server-side**, la pestaña Network del navegador nunca
+> las muestra (y así debe ser). Se resolvió agregando logs `[v0]` en la consola
+> del **servidor** para observarlas.
+
+### Paso 4 — Monitoreo (Log Analytics / Azure Monitor)
+
+1. Crear un **workspace de Log Analytics**.
+2. Conectar los **Diagnostic Logs** de APIM al workspace.
+3. Consultar el tráfico con **KQL** / ver métricas en Azure Monitor.
+
+> **Obstáculo #1:** el tráfico no aparecía "al instante". **Metrics** refleja
+> datos en ~1–2 min, pero **Log Analytics tarda 2–10 min** en ingerir para
+> consultas KQL. No era un fallo, era latencia de ingesta.
+>
+> **Obstáculo #2:** la caché de la app hacía que no se generara tráfico nuevo en
+> APIM. Para forzar llamadas reales se le pega directo al gateway con
+> **Bruno / curl / Test console**, activando **Ocp-Apim-Trace** para ver cada
+> policy ejecutarse.
+
+---
+
 ## Recorrido de desarrollo
 
 ### 1. Pruebas de la integración (Bruno / consola de APIM)
